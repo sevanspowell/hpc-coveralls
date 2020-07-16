@@ -1,0 +1,7 @@
+index-state: 2020-07-14T00:00:00Z
+
+packages:
+  hpc-coveralls.cabal
+
+package hpc-coveralls
+  coverage: False

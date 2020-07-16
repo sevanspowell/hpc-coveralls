@@ -172,3 +172,17 @@ BSD3 ([tl;dr](https://tldrlegal.com/license/bsd-3-clause-license-(revised)))
 # Notes
 
 - HPC publication: http://ittc.ku.edu/~andygill/papers/Hpc07.pdf
+
+
+# hpc-coveralls-lean
+
+hpc-coveralls but information can come from inputs, instead of
+hpc-coveralls executing commands. hpc-coveralls assumes it is being
+run inside the original source tree.
+
+Motivated by wanting hpc-coveralls in a Nix environment where the
+inputs are already available, I just want to transform and send the
+data up.
+
+Working command:
+cabal run hpc-coveralls cardano-launcher-test -- --hpc-directory=/nix/store/lvwa17ivphzfagv8375v11gf18cvzrjp-cardano-launcher-coverage/share/hpc/ --cabal-file /nix/store/p5k3sriighqs077dl4x0blvpap4a4zgw-cardano-launcher-coverage/cardano-launcher.cabal --source-directory=/nix/store/lvwa17ivphzfagv8375v11gf18cvzrjp-cardano-launcher-coverage/

@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 -- |
 -- Module:      Trace.Hpc.Coveralls
@@ -9,16 +10,20 @@
 --
 -- Functions for converting and sending hpc output to coveralls.io.
 
-module Trace.Hpc.Coveralls ( generateCoverallsFromTix ) where
+module Trace.Hpc.Coveralls ( generateCoverallsFromTix, ioFailure, getCoverageData, filterCoverageData ) where
 
 import           Control.Applicative
+import           Control.Monad (forM)
 import           Data.Aeson
+import           Data.Monoid ((<>))
 import           Data.Aeson.Types ()
 import qualified Data.ByteString.Lazy.Char8 as LBS
 import           Data.Digest.Pure.MD5
+import           Data.Foldable (fold)
 import           Data.Function
 import           Data.List
 import qualified Data.Map.Strict as M
+import           System.Directory (doesDirectoryExist)
 import           System.Exit (exitFailure)
 import           Trace.Hpc.Coveralls.Config
 import           Trace.Hpc.Coveralls.GitInfo (GitInfo)
@@ -105,7 +110,9 @@ mergeCoverageData :: [TestSuiteCoverageData] -> TestSuiteCoverageData
 mergeCoverageData = foldr1 (M.unionWith mergeModuleCoverageData)
 
 readMix' :: Maybe String -> String -> String -> TixModule -> IO Mix
-readMix' mPkgNameVer hpcDir name tix = readMix dirs (Right tix)
+readMix' mPkgNameVer hpcDir name tix = do
+  putStrLn ("MixDirs: " <> show dirs)
+  readMix dirs (Right tix)
     where dirs = nub $ (\x -> getMixPath x hpcDir name tix) <$> [Nothing, mPkgNameVer]
 
 -- | Create a list of coverage data from the tix input
@@ -150,6 +157,53 @@ generateCoverallsFromTix serviceName jobId gitInfo config mPkgNameVer = do
                   converter = case coverageMode config of
                       StrictlyFullLines -> strictConverter
                       AllowPartialLines -> looseConverter
+
+getCoverageData
+  :: Maybe String
+  -- ^ Package name-version
+  -> FilePath
+  -- ^ HPC directory
+  -> FilePath
+  -- ^ Source directory
+  -> [String]
+  -- ^ Test suite names
+  -> IO TestSuiteCoverageData
+getCoverageData mPkgNameVer hpcDir srcDir testSuiteNames = do
+  pathExists <- doesDirectoryExist hpcDir
+  if pathExists == False
+    then putStrLn "Couldn't find the hpc data directory" >> dumpDirectory hpcDir >> ioFailure
+    else
+      -- For each test suite
+      (flip foldMap) testSuiteNames $ \testSuiteName -> do
+      -- Read the tix file
+        let tixPath = getTixPath hpcDir testSuiteName
+        mTix <- readTix tixPath
+        case mTix of
+          Nothing -> putStrLn ("Couldn't find the file " ++ tixPath) >> dumpDirectoryTree hpcDir >> ioFailure
+          Just tix@(Tix tixModules) -> do
+      -- For each TixModule in the tix file
+            (flip foldMap) tixModules $ \tixModule@(TixModule _ _ _ tixs)-> do
+      -- Read the mix file
+              mix@(Mix filePath _ _ _ _) <- readMix' mPkgNameVer hpcDir testSuiteName tixModule
+      -- Read the source
+              source <- readFile $ (srcDir <> "/" <> filePath)
+      -- Package these up with module tixs, indexed by the file path
+              pure $ M.singleton filePath (source, mix, tixs)
+      -- Sum all this up using the monoid instance for TestCoverageData,
+      -- forming the total coverage data
+
+filterCoverageData :: (FilePath -> Bool)
+                   -> TestSuiteCoverageData
+                   -> TestSuiteCoverageData
+filterCoverageData pred = M.filterWithKey (\k v -> pred k)
+
+-- hpcDir, testSuiteNames, sourceDirFilter:
+
+-- coverageData <- getCoverageData mPkgNameVer hpcDir testSuiteNames
+-- let filteredCoverageData = filterCoverageData sourceDirFilter coverageData
+-- return $ toCoverallsJson serviceName jobId repoTokenM gitInfo converter filteredCoverageData
+
+-- semigroupOp is unionWith mergeCoverageData
 
 ioFailure :: IO a
 ioFailure = putStrLn ("You can get support at " ++ gitterUrl) >> exitFailure

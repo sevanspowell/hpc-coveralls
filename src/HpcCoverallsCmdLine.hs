@@ -18,6 +18,8 @@ data HpcCoverallsArgs = CmdMain
     , optCurlVerbose   :: Bool
     , optDontSend      :: Bool
     , optCoverageMode  :: CoverageMode
+    , optHpcDirectory  :: Maybe String
+    , optSrcDirectory  :: Maybe String
     } deriving (Data, Show, Typeable)
 
 hpcCoverallsArgs :: HpcCoverallsArgs
@@ -30,6 +32,8 @@ hpcCoverallsArgs = CmdMain
     , optCabalFile     = Nothing           &= explicit &= typ "FILE"  &= name "cabal-file"     &= help "Cabal file (ex.: module-name.cabal)"
     , optServiceName   = Nothing           &= explicit &= typ "TOKEN" &= name "service-name"   &= help "service-name (e.g. travis-pro)"
     , optRepoToken     = Nothing           &= explicit &= typ "TOKEN" &= name "repo-token"     &= help "Coveralls repo token"
+    , optHpcDirectory  = Nothing           &= explicit &= typDir      &= name "hpc-directory"  &= help "Explicitly use this hpc directory instead of trying to discover one"
+    , optSrcDirectory  = Nothing           &= explicit &= typDir      &= name "source-directory"  &= help "Explicitly use this source directory instead of the current directory"
     , argTestSuites    = []                &= typ "TEST-SUITES" &= args
     } &= summary ("hpc-coveralls v" ++ versionString version ++ ", (C) Guillaume Nargeot 2014-2015")
       &= program "hpc-coveralls"
