@@ -68,9 +68,7 @@ main = do
             Just hpcDir -> pure hpcDir
 
       -- Determine srcDir to use
-      let srcDir = fromMaybe
-                   "."                    -- Use current directory if override not provided
-                   (optRootDirectory hca) -- Otherwise use override
+      let srcDir = "."
 
       -- Collect and filter the coverage data
       let testSuiteNames = testSuites config
@@ -79,7 +77,7 @@ main = do
 
       mPkgNameVer <- case cabalFile config of
         Just cabalFilePath -> getPackageNameVersion cabalFilePath
-        Nothing -> dirPkgNameVer srcDir
+        Nothing -> currDirPkgNameVer
       coverageData <- getCoverageData mPkgNameVer hpcDir srcDir testSuiteNames
       let filteredCoverageData = filterCoverageData sourceDirFilter coverageData
 
