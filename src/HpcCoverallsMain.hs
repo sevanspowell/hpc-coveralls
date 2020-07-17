@@ -7,6 +7,7 @@ import           Data.Aeson
 import qualified Data.ByteString.Lazy.Char8 as BSL
 import           Data.List
 import           Data.Maybe hiding (listToMaybe)
+import           Data.Semigroup ((<>))
 import           HpcCoverallsCmdLine
 import           System.Console.CmdArgs
 import           System.Environment (getEnv, getEnvironment)
@@ -56,7 +57,7 @@ main = do
     Nothing -> putStrLn "Please specify a target test suite name"
     Just config -> do
       -- Determine hpcDir to use
-      hpcDir <- case (optHpcDirectory hca) of
+      hpcDir <- case optHpcDirectory hca of
         -- If explicit hpcDir provided, use that
         (Just hpcDir) -> pure hpcDir
         -- Else try to discover hpcDir
@@ -69,7 +70,7 @@ main = do
       -- Determine srcDir to use
       let srcDir = fromMaybe
                    "."                    -- Use current directory if override not provided
-                   (optSrcDirectory hca)  -- Otherwise use override
+                   (optRootDirectory hca) -- Otherwise use override
 
       -- Collect and filter the coverage data
       let testSuiteNames = testSuites config
@@ -78,7 +79,7 @@ main = do
 
       mPkgNameVer <- case cabalFile config of
         Just cabalFilePath -> getPackageNameVersion cabalFilePath
-        Nothing -> currDirPkgNameVer
+        Nothing -> dirPkgNameVer srcDir
       coverageData <- getCoverageData mPkgNameVer hpcDir srcDir testSuiteNames
       let filteredCoverageData = filterCoverageData sourceDirFilter coverageData
 

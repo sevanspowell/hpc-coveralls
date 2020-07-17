@@ -186,3 +186,7 @@ data up.
 
 Working command:
 cabal run hpc-coveralls cardano-launcher-test -- --hpc-directory=/nix/store/lvwa17ivphzfagv8375v11gf18cvzrjp-cardano-launcher-coverage/share/hpc/ --cabal-file /nix/store/p5k3sriighqs077dl4x0blvpap4a4zgw-cardano-launcher-coverage/cardano-launcher.cabal --source-directory=/nix/store/lvwa17ivphzfagv8375v11gf18cvzrjp-cardano-launcher-coverage/
+
+pushd /nix/store/lvwa17ivphzfagv8375v11gf18cvzrjp-cardano-launcher-coverage/ && \
+/home/sam/code/iohk/hpc-coveralls/dist/build/hpc-coveralls/hpc-coveralls cardano-launcher-test --hpc-directory=/nix/store/lvwa17ivphzfagv8375v11gf18cvzrjp-cardano-launcher-coverage/share/hpc/ && \
+popd

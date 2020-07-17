@@ -9,12 +9,13 @@
 --
 -- Functions for reading cabal package name and version.
 
-module Trace.Hpc.Coveralls.Cabal (currDirPkgNameVer, getPackageNameVersion) where
+module Trace.Hpc.Coveralls.Cabal (dirPkgNameVer, getPackageNameVersion) where
 
 import Control.Applicative
 import Control.Monad
 import Control.Monad.Trans.Maybe
 import Data.List (intercalate, isSuffixOf)
+import Data.Semigroup ((<>))
 import Distribution.Package
 import Distribution.PackageDescription
 import Distribution.PackageDescription.Parse
@@ -23,8 +24,17 @@ import System.Directory
 
 getCabalFile :: FilePath -> IO (Maybe FilePath)
 getCabalFile dir = do
-    files <- (filter isCabal <$> getDirectoryContents dir) >>= filterM doesFileExist
-    case files of
+    dirContents <- getDirectoryContents dir
+    let
+      cabalFiles = filter isCabal dirContents
+      -- If the directory isn't ".", we need to make sure that the
+      -- directory is added to the cabal file path in order for
+      -- "doesFileExist" to find it.
+      cabalFilesFullPath = ((dir <> "/") <>) <$> cabalFiles
+
+    realCabalFiles <- filterM doesFileExist cabalFilesFullPath
+
+    case realCabalFiles of
         [file] -> return $ Just file
         _ -> return Nothing
     where isCabal filename = ".cabal" `isSuffixOf` filename && length filename > 6
@@ -40,10 +50,9 @@ getPackageNameVersion file = do
                   version = showVersion (pkgVersion pkg)
                   showVersion = intercalate "." . map show . versionNumbers
 
-currDirPkgNameVer :: IO (Maybe String)
-currDirPkgNameVer = runMaybeT $ pkgNameVersion currentDir
+dirPkgNameVer :: FilePath -> IO (Maybe String)
+dirPkgNameVer = runMaybeT . pkgNameVersion
     where pkgNameVersion = MaybeT . getPackageNameVersion <=< MaybeT . getCabalFile
-          currentDir = "."
 
 #if !(MIN_VERSION_Cabal(1,22,0))
 unPackageName :: PackageName -> String
