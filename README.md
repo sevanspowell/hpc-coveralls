@@ -190,3 +190,5 @@ cabal run hpc-coveralls cardano-launcher-test -- --hpc-directory=/nix/store/lvwa
 pushd /nix/store/lvwa17ivphzfagv8375v11gf18cvzrjp-cardano-launcher-coverage/ && \
 /home/sam/code/iohk/hpc-coveralls/dist/build/hpc-coveralls/hpc-coveralls cardano-launcher-test --hpc-directory=/nix/store/lvwa17ivphzfagv8375v11gf18cvzrjp-cardano-launcher-coverage/share/hpc/ && \
 popd
+
+cabal run hpc-coveralls -- cardano-launcher-test --hpc-directory=/nix/store/lvwa17ivphzfagv8375v11gf18cvzrjp-cardano-launcher-coverage/share/hpc/

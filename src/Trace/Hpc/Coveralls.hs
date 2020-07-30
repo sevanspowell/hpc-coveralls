@@ -10,7 +10,7 @@
 --
 -- Functions for converting and sending hpc output to coveralls.io.
 
-module Trace.Hpc.Coveralls ( generateCoverallsFromTix, ioFailure, getCoverageData, filterCoverageData ) where
+module Trace.Hpc.Coveralls ( generateCoverallsFromTix, ioFailure, getCoverageData, filterCoverageData, strictConverter, looseConverter, toCoverallsJson) where
 
 import           Control.Applicative
 import           Control.Monad (forM)
@@ -111,7 +111,11 @@ mergeCoverageData = foldr1 (M.unionWith mergeModuleCoverageData)
 
 readMix' :: Maybe String -> String -> String -> TixModule -> IO Mix
 readMix' mPkgNameVer hpcDir name tix = do
-  putStrLn ("MixDirs: " <> show dirs)
+  putStrLn ("hpcDir      : " <> hpcDir)
+  putStrLn ("name        : " <> name)
+  putStrLn ("tix         : " <> show tix)
+  putStrLn ("mPkgNameVer : " <> show mPkgNameVer)
+  putStrLn ("MixDirs     : " <> show dirs)
   readMix dirs (Right tix)
     where dirs = nub $ (\x -> getMixPath x hpcDir name tix) <$> [Nothing, mPkgNameVer]
 

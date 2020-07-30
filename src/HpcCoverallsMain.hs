@@ -14,11 +14,12 @@ import           System.Environment (getEnv, getEnvironment)
 import           System.Exit (exitFailure)
 import           Trace.Hpc.Coveralls
 import           Trace.Hpc.Coveralls.Cabal
-import           Trace.Hpc.Coveralls.Config (Config(Config, cabalFile, serviceName, testSuites, excludedDirs))
+import           Trace.Hpc.Coveralls.Config (Config(Config, cabalFile, serviceName, testSuites, excludedDirs, coverageMode, repoToken))
 import           Trace.Hpc.Coveralls.Curl
 import           Trace.Hpc.Coveralls.GitInfo (getGitInfo)
 import           Trace.Hpc.Coveralls.Util
 import           Trace.Hpc.Coveralls.Paths (firstExistingDirectory, hpcDirs, dumpDirectory, distDir, )
+import           Trace.Hpc.Coveralls.Types (CoverageMode(StrictlyFullLines, AllowPartialLines))
 
 urlApiV1 :: String
 urlApiV1 = "https://coveralls.io/api/v1/jobs"
@@ -81,9 +82,40 @@ main = do
       coverageData <- getCoverageData mPkgNameVer hpcDir srcDir testSuiteNames
       let filteredCoverageData = filterCoverageData sourceDirFilter coverageData
 
-      putStrLn (show filteredCoverageData)
+      -- putStrLn (show filteredCoverageData)
+
       -- Convert data to coveralls format
-      -- toCoverallsJson serviceName jobId repoTokenM gitInfo converter filteredCoverageData
+      (defaultServiceName, jobId) <- getServiceAndJobID
+      gitInfo <- getGitInfo
+      let sn = fromMaybe defaultServiceName (serviceName config)
+          converter = case coverageMode config of
+                        StrictlyFullLines -> strictConverter
+                        AllowPartialLines -> looseConverter
+          repoTokenM = repoToken config
+          coverallsJson = toCoverallsJson sn jobId repoTokenM gitInfo converter filteredCoverageData
+
+      -- Write data locally
+      when (optDisplayReport hca) $ BSL.putStrLn $ encode coverallsJson
+      let filePath = sn ++ "-" ++ jobId ++ ".json"
+      writeJson filePath coverallsJson
+
+      -- Optionally send data to coveralls.io
+      -- unless (optDontSend hca) $ do
+      --     response <- postJson filePath urlApiV1 (optCurlVerbose hca)
+      --     case response of
+      --         PostSuccess url -> do
+      --             putStrLn ("URL: " ++ url)
+      --             -- wait 10 seconds until the page is available
+      --             threadDelay (10 * 1000 * 1000)
+      --             coverageResult <- readCoverageResult url (optCurlVerbose hca)
+      --             case coverageResult of
+      --                 Just totalCoverage -> putStrLn ("Coverage: " ++ totalCoverage)
+      --                 Nothing -> putStrLn "Failed to read total coverage"
+      --         PostFailure msg -> do
+      --             putStrLn ("Error: " ++ msg)
+      --             putStrLn ("You can get support at " ++ gitterUrl)
+      --             exitFailure
+      --             where gitterUrl = "https://gitter.im/guillaume-nargeot/hpc-coveralls"
 
 -- main :: IO ()
 -- main = do
