@@ -15,7 +15,7 @@ module Trace.Hpc.Coveralls ( generateCoverallsFromTix, ioFailure, getCoverageDat
 import           Control.Applicative
 import           Control.Monad (forM)
 import           Data.Aeson
-import           Data.Monoid ((<>))
+import           Data.Monoid ((<>), First(First, getFirst))
 import           Data.Aeson.Types ()
 import qualified Data.ByteString.Lazy.Char8 as LBS
 import           Data.Digest.Pure.MD5
@@ -23,7 +23,7 @@ import           Data.Foldable (fold)
 import           Data.Function
 import           Data.List
 import qualified Data.Map.Strict as M
-import           System.Directory (doesDirectoryExist)
+import           System.Directory (doesDirectoryExist, doesFileExist)
 import           System.Exit (exitFailure)
 import           Trace.Hpc.Coveralls.Config
 import           Trace.Hpc.Coveralls.GitInfo (GitInfo)
@@ -168,7 +168,7 @@ getCoverageData
   -> FilePath
   -- ^ HPC directory
   -> FilePath
-  -- ^ Source directory
+  -- ^ Source directories
   -> [String]
   -- ^ Test suite names
   -> IO TestSuiteCoverageData
@@ -178,7 +178,7 @@ getCoverageData mPkgNameVer hpcDir srcDir testSuiteNames = do
     then putStrLn "Couldn't find the hpc data directory" >> dumpDirectory hpcDir >> ioFailure
     else
       -- For each test suite
-      (flip foldMap) testSuiteNames $ \testSuiteName -> do
+      foldFor testSuiteNames $ \testSuiteName -> do
       -- Read the tix file
         let tixPath = getTixPath hpcDir testSuiteName
         mTix <- readTix tixPath
@@ -186,15 +186,51 @@ getCoverageData mPkgNameVer hpcDir srcDir testSuiteNames = do
           Nothing -> putStrLn ("Couldn't find the file " ++ tixPath) >> dumpDirectoryTree hpcDir >> ioFailure
           Just tix@(Tix tixModules) -> do
       -- For each TixModule in the tix file
-            (flip foldMap) tixModules $ \tixModule@(TixModule _ _ _ tixs)-> do
+            foldFor tixModules $ \tixModule@(TixModule _ _ _ tixs) -> do
       -- Read the mix file
               mix@(Mix filePath _ _ _ _) <- readMix' mPkgNameVer hpcDir testSuiteName tixModule
       -- Read the source
-              source <- readFile $ (srcDir <> "/" <> filePath)
-      -- Package these up with module tixs, indexed by the file path
+              srcFile <- findSourceFile srcDir filePath
+      -- Package source up with module tixs, indexed by the file path
               pure $ M.singleton filePath (source, mix, tixs)
       -- Sum all this up using the monoid instance for TestCoverageData,
       -- forming the total coverage data
+
+findSourceFile
+  :: FilePath
+  -- ^ Source directories
+  -> FilePath
+  -- ^ File to look for
+  -> IO FilePath
+  -- ^ Found file
+findSourceFile srcDir file = do
+  subDirs <- do
+    contents <- listDirectory srcDir
+    foldFor contents $ \f -> do
+      isDir <- doesDirectoryExist f
+      if isDir
+        then pure [f]
+        else pure []
+  let
+    candidates :: [FilePath]
+    candidates = srcDir : subDirs
+
+  (mFullPath :: First FilePath) <- foldFor candidates $ \dir -> do
+    let fullPath = dir <> "/" <> file
+    fileExists <- doesFileExist fullPath
+    if fileExists
+      then pure (First (Just fullPath))
+      else pure (mempty)
+
+  let result = getFirst mFullPath
+
+  case result of
+    Nothing        -> putStrLn ("Couldn't find the source file " ++ filePath ++ " in directories: " <> show candidates <> ".") >> ioFailure
+    (Just srcFile) -> pure srcFile
+
+foldFor :: _
+foldFor = flip foldMap
+  
 
 filterCoverageData :: (FilePath -> Bool)
                    -> TestSuiteCoverageData
