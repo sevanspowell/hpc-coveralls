@@ -10,7 +10,7 @@
 --
 -- Functions for converting and sending hpc output to coveralls.io.
 
-module Trace.Hpc.Coveralls ( generateCoverallsFromTix, ioFailure, getCoverageData, filterCoverageData, strictConverter, looseConverter, toCoverallsJson) where
+module Trace.Hpc.Coveralls ( ioFailure, getCoverageData, filterCoverageData, strictConverter, looseConverter, toCoverallsJson) where
 
 import           Control.Applicative
 import           Control.Monad (forM)
@@ -23,7 +23,7 @@ import           Data.Foldable (fold)
 import           Data.Function
 import           Data.List
 import qualified Data.Map.Strict as M
-import           System.Directory (doesDirectoryExist, doesFileExist)
+import           System.Directory (doesDirectoryExist, doesFileExist, listDirectory)
 import           System.Exit (exitFailure)
 import           Trace.Hpc.Coveralls.Config
 import           Trace.Hpc.Coveralls.GitInfo (GitInfo)
@@ -109,76 +109,37 @@ mergeModuleCoverageData (source, mix, tixs1) (_, _, tixs2) =
 mergeCoverageData :: [TestSuiteCoverageData] -> TestSuiteCoverageData
 mergeCoverageData = foldr1 (M.unionWith mergeModuleCoverageData)
 
-readMix' :: Maybe String -> String -> String -> TixModule -> IO Mix
-readMix' mPkgNameVer hpcDir name tix = do
+readMix' :: [PackageIdentifier] -> String -> String -> TixModule -> IO Mix
+readMix' pkgIds hpcDir name tix = do
   putStrLn ("hpcDir      : " <> hpcDir)
   putStrLn ("name        : " <> name)
   putStrLn ("tix         : " <> show tix)
-  putStrLn ("mPkgNameVer : " <> show mPkgNameVer)
+  putStrLn ("mPkgNameVer : " <> show pkgNameVers)
   putStrLn ("MixDirs     : " <> show dirs)
   readMix dirs (Right tix)
-    where dirs = nub $ (\x -> getMixPath x hpcDir name tix) <$> [Nothing, mPkgNameVer]
-
--- | Create a list of coverage data from the tix input
-readCoverageData :: Maybe String             -- ^ Package name-version
-                 -> String                   -- ^ hpc data directory
-                 -> [String]                 -- ^ excluded source folders
-                 -> String                   -- ^ test suite name
-                 -> IO TestSuiteCoverageData -- ^ coverage data list
-readCoverageData mPkgNameVer hpcDir excludeDirPatterns testSuiteName = do
-    let tixPath = getTixPath hpcDir testSuiteName
-    mTix <- readTix tixPath
-    case mTix of
-        Nothing -> putStrLn ("Couldn't find the file " ++ tixPath) >> dumpDirectoryTree hpcDir >> ioFailure
-        Just (Tix tixs) -> do
-            mixs <- mapM (readMix' mPkgNameVer hpcDir testSuiteName) tixs
-            let files = map filePath mixs
-            sources <- mapM readFile files
-            let coverageDataList = zip4 files sources mixs (map tixModuleTixs tixs)
-            let filteredCoverageDataList = filter sourceDirFilter coverageDataList
-            return $ M.fromList $ map toFirstAndRest filteredCoverageDataList
-            where filePath (Mix fp _ _ _ _) = fp
-                  sourceDirFilter = not . matchAny excludeDirPatterns . fst4
-
--- | Generate coveralls json formatted code coverage from hpc coverage data
-generateCoverallsFromTix :: String       -- ^ CI name
-                         -> String       -- ^ CI Job ID
-                         -> GitInfo      -- ^ Git repo information
-                         -> Config       -- ^ hpc-coveralls configuration
-                         -> Maybe String -- ^ Package name-version
-                         -> IO Value     -- ^ code coverage result in json format
-generateCoverallsFromTix serviceName jobId gitInfo config mPkgNameVer = do
-    mHpcDir <- firstExistingDirectory hpcDirs
-    case mHpcDir of
-        Nothing -> putStrLn "Couldn't find the hpc data directory" >> dumpDirectory distDir >> ioFailure
-        Just hpcDir -> do
-            testSuitesCoverages <- mapM (readCoverageData mPkgNameVer hpcDir excludedDirPatterns) testSuiteNames
-            let coverageData = mergeCoverageData testSuitesCoverages
-            return $ toCoverallsJson serviceName jobId repoTokenM gitInfo converter coverageData
-            where excludedDirPatterns = excludedDirs config
-                  testSuiteNames = testSuites config
-                  repoTokenM = repoToken config
-                  converter = case coverageMode config of
-                      StrictlyFullLines -> strictConverter
-                      AllowPartialLines -> looseConverter
+    where
+      dirs        = nub $ (\x -> getMixPath x hpcDir name tix) <$> (Nothing : (Just <$> pkgNameVers))
+      pkgNameVers = asNameVer <$> pkgIds
 
 getCoverageData
-  :: Maybe String
-  -- ^ Package name-version
+  :: [Package]
+  -- ^ List of package information
   -> FilePath
   -- ^ HPC directory
-  -> FilePath
-  -- ^ Source directories
   -> [String]
   -- ^ Test suite names
   -> IO TestSuiteCoverageData
-getCoverageData mPkgNameVer hpcDir srcDir testSuiteNames = do
+getCoverageData pkgs hpcDir testSuiteNames = do
+  let
+    pkgIds  = pkgId      <$> pkgs
+    pkgDirs = pkgRootDir <$> pkgs
+
   pathExists <- doesDirectoryExist hpcDir
   if pathExists == False
     then putStrLn "Couldn't find the hpc data directory" >> dumpDirectory hpcDir >> ioFailure
     else
       -- For each test suite
-      foldFor testSuiteNames $ \testSuiteName -> do
+      (flip foldMap) testSuiteNames $ \testSuiteName -> do
       -- Read the tix file
         let tixPath = getTixPath hpcDir testSuiteName
         mTix <- readTix tixPath
@@ -186,15 +147,39 @@ getCoverageData mPkgNameVer hpcDir srcDir testSuiteNames = do
           Nothing -> putStrLn ("Couldn't find the file " ++ tixPath) >> dumpDirectoryTree hpcDir >> ioFailure
           Just tix@(Tix tixModules) -> do
       -- For each TixModule in the tix file
-            foldFor tixModules $ \tixModule@(TixModule _ _ _ tixs) -> do
+            (flip foldMap) tixModules $ \tixModule@(TixModule _ _ _ tixs) -> do
       -- Read the mix file
-              mix@(Mix filePath _ _ _ _) <- readMix' mPkgNameVer hpcDir testSuiteName tixModule
+              mix@(Mix filePath _ _ _ _) <- readMix' pkgIds hpcDir testSuiteName tixModule
       -- Read the source
-              srcFile <- findSourceFile srcDir filePath
+              mActualFilePath <- firstFileInDirs filePath pkgDirs
+              source <- case mActualFilePath of
+                Nothing             ->
+                  putStrLn ("Couldn't find the source file " ++ filePath ++ " in directories: " <> show pkgDirs <> ".") >> ioFailure
+                Just actualFilePath ->
+                  readFile actualFilePath
       -- Package source up with module tixs, indexed by the file path
               pure $ M.singleton filePath (source, mix, tixs)
       -- Sum all this up using the monoid instance for TestCoverageData,
       -- forming the total coverage data
+
+firstFileInDirs :: FilePath -> [FilePath] -> IO (Maybe FilePath)
+firstFileInDirs file dirs = do
+  mFps <- sequence (isFileInDir file <$> dirs)
+  pure $ getFirst . foldMap First $ mFps
+
+isFileInDir
+  :: FilePath
+  -- ^ File
+  -> FilePath 
+  -- ^ Dir
+  -> IO (Maybe FilePath)
+  -- ^ Full path if it exists
+isFileInDir file dir = do
+  let fullPath = dir <> "/" <> file
+  fileExists <- doesFileExist fullPath
+  pure $ if fileExists
+    then Just fullPath
+    else Nothing
 
 findSourceFile
   :: FilePath
@@ -206,7 +191,7 @@ findSourceFile
 findSourceFile srcDir file = do
   subDirs <- do
     contents <- listDirectory srcDir
-    foldFor contents $ \f -> do
+    (flip foldMap) contents $ \f -> do
       isDir <- doesDirectoryExist f
       if isDir
         then pure [f]
@@ -215,7 +200,7 @@ findSourceFile srcDir file = do
     candidates :: [FilePath]
     candidates = srcDir : subDirs
 
-  (mFullPath :: First FilePath) <- foldFor candidates $ \dir -> do
+  (mFullPath :: First FilePath) <- (flip foldMap) candidates $ \dir -> do
     let fullPath = dir <> "/" <> file
     fileExists <- doesFileExist fullPath
     if fileExists
@@ -225,11 +210,11 @@ findSourceFile srcDir file = do
   let result = getFirst mFullPath
 
   case result of
-    Nothing        -> putStrLn ("Couldn't find the source file " ++ filePath ++ " in directories: " <> show candidates <> ".") >> ioFailure
+    Nothing        -> putStrLn ("Couldn't find the source file " ++ file ++ " in directories: " <> show candidates <> ".") >> ioFailure
     (Just srcFile) -> pure srcFile
 
-foldFor :: _
-foldFor = flip foldMap
+foldFor :: (Foldable t, Monoid m) => t a -> (a -> m) -> m
+foldFor = (flip foldMap)
   
 
 filterCoverageData :: (FilePath -> Bool)

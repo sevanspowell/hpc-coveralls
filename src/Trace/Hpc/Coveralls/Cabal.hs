@@ -9,18 +9,19 @@
 --
 -- Functions for reading cabal package name and version.
 
-module Trace.Hpc.Coveralls.Cabal (currDirPkgNameVer, getPackageNameVersion) where
+module Trace.Hpc.Coveralls.Cabal (getPackageIdFromDir, getPackageFromDir, getPackageId) where
 
 import Control.Applicative
 import Control.Monad
 import Control.Monad.Trans.Maybe
 import Data.List (intercalate, isSuffixOf)
 import Data.Semigroup ((<>))
-import Distribution.Package
+import Distribution.Package (unPackageName, pkgName, pkgVersion)
 import Distribution.PackageDescription
 import Distribution.PackageDescription.Parse
 import Distribution.Version
 import System.Directory
+import Trace.Hpc.Coveralls.Types (Package(Package), PackageIdentifier(PackageIdentifier))
 
 getCabalFile :: FilePath -> IO (Maybe FilePath)
 getCabalFile dir = do
@@ -41,11 +42,29 @@ getPackageNameVersion file = do
                   version = showVersion (pkgVersion pkg)
                   showVersion = intercalate "." . map show . versionNumbers
 
-currDirPkgNameVer :: IO (Maybe String)
-currDirPkgNameVer = runMaybeT $ pkgNameVersion currentDir
+dirPkgNameVer :: FilePath -> IO (Maybe String)
+dirPkgNameVer = runMaybeT . pkgNameVersion
     where pkgNameVersion = MaybeT . getPackageNameVersion <=< MaybeT . getCabalFile
-          currentDir = "."
 
+getPackageIdFromDir :: FilePath -> IO (Maybe PackageIdentifier)
+getPackageIdFromDir = runMaybeT . pkgId
+  where pkgId = MaybeT . getPackageId <=< MaybeT . getCabalFile
+
+getPackageId :: FilePath -> IO (Maybe PackageIdentifier)
+getPackageId file = do
+  orig <- readFile file
+  case parsePackageDescription orig of
+    ParseFailed _ -> return Nothing
+    ParseOk _warnings gpd -> return . Just $ PackageIdentifier name version
+      where pkg = package . packageDescription $ gpd
+            name = unPackageName $ pkgName pkg
+            version = showVersion (pkgVersion pkg)
+            showVersion = intercalate "." . map show . versionNumbers
+
+getPackageFromDir :: FilePath -> IO (Maybe Package)
+getPackageFromDir dir = do
+  mPkgId <- getPackageIdFromDir dir
+  pure $ Package dir <$> mPkgId
 
 #if !(MIN_VERSION_Cabal(1,22,0))
 unPackageName :: PackageName -> String

@@ -15,6 +15,7 @@ import Data.Data
 import Network.Curl
 import System.Console.CmdArgs.Default
 import Trace.Hpc.Mix
+import Data.Semigroup ((<>))
 
 type CoverageEntry = (
     [MixEntry], -- mix entries
@@ -40,3 +41,19 @@ data CoverageMode = StrictlyFullLines
 data PostResult =
     PostSuccess URLString -- ^ Coveralls job url
   | PostFailure String    -- ^ error message
+
+
+data PackageIdentifier
+  = PackageIdentifier { pkgIdName    :: String
+                      , pkgIdVersion :: String
+                      }
+  deriving (Eq, Show, Data)
+
+asNameVer :: PackageIdentifier -> String
+asNameVer (PackageIdentifier name ver) = name <> "-" <> ver
+  
+data Package
+  = Package { pkgRootDir :: FilePath
+            , pkgId      :: PackageIdentifier
+            }
+  deriving (Eq, Show, Data)

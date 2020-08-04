@@ -19,7 +19,7 @@ import           Trace.Hpc.Coveralls.Curl
 import           Trace.Hpc.Coveralls.GitInfo (getGitInfo)
 import           Trace.Hpc.Coveralls.Util
 import           Trace.Hpc.Coveralls.Paths (firstExistingDirectory, hpcDirs, dumpDirectory, distDir, )
-import           Trace.Hpc.Coveralls.Types (CoverageMode(StrictlyFullLines, AllowPartialLines))
+import           Trace.Hpc.Coveralls.Types (CoverageMode(StrictlyFullLines, AllowPartialLines), Package(Package))
 
 urlApiV1 :: String
 urlApiV1 = "https://coveralls.io/api/v1/jobs"
@@ -58,7 +58,7 @@ main = do
     Nothing -> putStrLn "Please specify a target test suite name"
     Just config -> do
       -- Determine hpcDir to use
-      hpcDir <- case optHpcDirectory hca of
+      hpcDir <- case optHpcDir hca of
         -- If explicit hpcDir provided, use that
         (Just hpcDir) -> pure hpcDir
         -- Else try to discover hpcDir
@@ -69,17 +69,33 @@ main = do
             Just hpcDir -> pure hpcDir
 
       -- Determine srcDir to use
-      let srcDir = "."
+      let currDir = "./"
 
       -- Collect and filter the coverage data
       let testSuiteNames = testSuites config
           excludedDirPatterns = excludedDirs config
           sourceDirFilter = not . matchAny excludedDirPatterns
 
-      mPkgNameVer <- case cabalFile config of
-        Just cabalFilePath -> getPackageNameVersion cabalFilePath
-        Nothing -> currDirPkgNameVer
-      coverageData <- getCoverageData mPkgNameVer hpcDir srcDir testSuiteNames
+      mPkgs <- case cabalFile config of
+        -- Cabal file specified
+        Just cabalFilePath -> do
+          mPkgId <- getPackageId cabalFilePath
+          pure [Package currDir <$> mPkgId]
+        Nothing ->
+          let
+            packageDirs =
+              if length (optPackageDirs hca) == 0
+                then [currDir]
+                else (currDir <>) <$> (optPackageDirs hca)
+          in
+            foldMap (fmap (:[]) . getPackageFromDir) packageDirs
+
+      
+      let
+        pkgs :: [Package]
+        pkgs = foldMap (maybe [] pure) mPkgs
+
+      coverageData <- getCoverageData pkgs hpcDir testSuiteNames
       let filteredCoverageData = filterCoverageData sourceDirFilter coverageData
 
       -- putStrLn (show filteredCoverageData)
