@@ -114,7 +114,8 @@ readMix' pkgIds hpcDir name tix = do
   putStrLn ("hpcDir      : " <> hpcDir)
   putStrLn ("name        : " <> name)
   putStrLn ("tix         : " <> show tix)
-  putStrLn ("mPkgNameVer : " <> show pkgNameVers)
+  putStrLn ("pkgIds      : " <> show pkgIds)
+  putStrLn ("pkgNameVers : " <> show pkgNameVers)
   putStrLn ("MixDirs     : " <> show dirs)
   readMix dirs (Right tix)
     where

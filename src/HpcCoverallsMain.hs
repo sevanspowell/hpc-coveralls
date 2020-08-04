@@ -60,7 +60,7 @@ main = do
       -- Determine hpcDir to use
       hpcDir <- case optHpcDir hca of
         -- If explicit hpcDir provided, use that
-        (Just hpcDir) -> pure hpcDir
+        (Just hpcDir) -> pure (hpcDir <> "/")
         -- Else try to discover hpcDir
         Nothing -> do
           mHpcDir <- firstExistingDirectory hpcDirs
@@ -89,6 +89,8 @@ main = do
                 else (currDir <>) <$> (optPackageDirs hca)
           in
             foldMap (fmap (:[]) . getPackageFromDir) packageDirs
+
+      putStrLn $ "mPkgs: " <> show mPkgs
 
       
       let

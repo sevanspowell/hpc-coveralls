@@ -25,11 +25,18 @@ import Trace.Hpc.Coveralls.Types (Package(Package), PackageIdentifier(PackageIde
 
 getCabalFile :: FilePath -> IO (Maybe FilePath)
 getCabalFile dir = do
-    files <- (filter isCabal <$> getDirectoryContents dir) >>= filterM doesFileExist
-    case files of
-        [file] -> return $ Just file
-        _ -> return Nothing
-    where isCabal filename = ".cabal" `isSuffixOf` filename && length filename > 6
+    cabalFilesInDir <- filter isCabal <$> getDirectoryContents dir
+    cabalFiles <- filterM doesFileExist (mkFullPath <$> cabalFilesInDir)
+    case cabalFiles of
+        [file] -> do
+          putStrLn $ "getCabalFile: Found cabal file: " <> show file
+          return $ Just file
+        _ -> do
+          putStrLn $ "getCabalFile: Didn't find cabal file in: " <> show dir
+          return Nothing
+    where
+      isCabal filename = ".cabal" `isSuffixOf` filename && length filename > 6
+      mkFullPath = ((dir <> "/") <>)
 
 getPackageNameVersion :: FilePath -> IO (Maybe String)
 getPackageNameVersion file = do
@@ -63,7 +70,9 @@ getPackageId file = do
 
 getPackageFromDir :: FilePath -> IO (Maybe Package)
 getPackageFromDir dir = do
+  putStrLn $ "getPackageFromDir: dir:" <> show dir
   mPkgId <- getPackageIdFromDir dir
+  putStrLn $ "getPackageFromDir: mPkgId:" <> show mPkgId
   pure $ Package dir <$> mPkgId
 
 #if !(MIN_VERSION_Cabal(1,22,0))
