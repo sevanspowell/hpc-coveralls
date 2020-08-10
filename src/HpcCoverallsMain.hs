@@ -15,7 +15,7 @@ import           System.Environment (getEnv, getEnvironment)
 import           System.Exit (exitFailure)
 import           Trace.Hpc.Coveralls
 import           Trace.Hpc.Coveralls.Cabal
-import           Trace.Hpc.Coveralls.Config (Config(Config, cabalFile, serviceName))
+import           Trace.Hpc.Coveralls.Config (Config(Config, cabalFile, serviceName, excludedDirs, repoToken, coverageMode))
 import           Trace.Hpc.Coveralls.Curl
 import           Trace.Hpc.Coveralls.GitInfo (getGitInfo)
 import           Trace.Hpc.Coveralls.Util
@@ -42,7 +42,7 @@ getServiceAndJobID = do
 writeJson :: String -> Value -> IO ()
 writeJson filePath = BSL.writeFile filePath . encode
 
-getConfig :: HpcCoverallsArgs -> Maybe Config
+getConfig :: HpcCoverallsArgs -> Config
 getConfig hca = Config
     (optExcludeDirs hca)
     (optCoverageMode hca)
@@ -50,57 +50,45 @@ getConfig hca = Config
     (optServiceName hca)
     (optRepoToken hca)
     (optHpcDirs hca)
-    <$> listToMaybe (argTestSuites hca)
+    (optPackageDirs hca)
+    (argTestSuites hca)
 
 main :: IO ()
 main = do
     hca <- cmdArgs hpcCoverallsArgs
-    case getConfig hca of
-        Nothing -> putStrLn "Please specify a target test suite name"
-        Just config -> do
-            (defaultServiceName, jobId) <- getServiceAndJobID
-            let sn = fromMaybe defaultServiceName (serviceName config)
-            gitInfo <- getGitInfo
+    let config = getConfig hca
 
-            let
-              currDir = "./"
+    (defaultServiceName, jobId) <- getServiceAndJobID
+    let sn = fromMaybe defaultServiceName (serviceName config)
+    gitInfo <- getGitInfo
 
-              findPkgRequest :: FindPackageRequest
-              findPkgRequest =
-                case cabalFile config of
-                  Just cabalFilePath ->
-                    useExplicitCabalFiles [(currDir, Just cabalFilePath)]
-                  Nothing            ->
-                    let
-                      packageDirOverrides :: [FilePath]
-                      packageDirOverrides = optPackageDirs hca
-                      packageDirs :: [FilePath]
-                      packageDirs =
-                        if length packageDirOverrides == 0
-                          then [currDir]
-                          else packageDirOverrides 
-                    in
-                      searchTheseDirectories packageDirs
-            pkgs <- getPackages findPkgRequest
+    hpcDirs <- findHpcDataDirs config
+    pkgs    <- findPackages config
+    testSuiteNames <- findTestSuiteNames config pkgs
+    coverageData <- getCoverageData (excludedDirs config) hpcDirs pkgs testSuiteNames
+    let
+      repoTokenM = repoToken config
+      converter = case coverageMode config of
+        StrictlyFullLines -> strictConverter
+        AllowPartialLines -> looseConverter
+      coverallsJson = toCoverallsJson sn jobId repoTokenM gitInfo converter coverageData
 
-            gitInfo <- getGitInfo
-            coverallsJson <- generateCoverallsFromTix sn jobId gitInfo config pkgs 
-            when (optDisplayReport hca) $ BSL.putStrLn $ encode coverallsJson
-            let filePath = sn ++ "-" ++ jobId ++ ".json"
-            writeJson filePath coverallsJson
-            unless (optDontSend hca) $ do
-                response <- postJson filePath urlApiV1 (optCurlVerbose hca)
-                case response of
-                    PostSuccess url -> do
-                        putStrLn ("URL: " ++ url)
-                        -- wait 10 seconds until the page is available
-                        threadDelay (10 * 1000 * 1000)
-                        coverageResult <- readCoverageResult url (optCurlVerbose hca)
-                        case coverageResult of
-                            Just totalCoverage -> putStrLn ("Coverage: " ++ totalCoverage)
-                            Nothing -> putStrLn "Failed to read total coverage"
-                    PostFailure msg -> do
-                        putStrLn ("Error: " ++ msg)
-                        putStrLn ("You can get support at " ++ gitterUrl)
-                        exitFailure
-                        where gitterUrl = "https://gitter.im/guillaume-nargeot/hpc-coveralls"
+    when (optDisplayReport hca) $ BSL.putStrLn $ encode coverallsJson
+    let filePath = sn ++ "-" ++ jobId ++ ".json"
+    writeJson filePath coverallsJson
+    unless (optDontSend hca) $ do
+        response <- postJson filePath urlApiV1 (optCurlVerbose hca)
+        case response of
+            PostSuccess url -> do
+                putStrLn ("URL: " ++ url)
+                -- wait 10 seconds until the page is available
+                threadDelay (10 * 1000 * 1000)
+                coverageResult <- readCoverageResult url (optCurlVerbose hca)
+                case coverageResult of
+                    Just totalCoverage -> putStrLn ("Coverage: " ++ totalCoverage)
+                    Nothing -> putStrLn "Failed to read total coverage"
+            PostFailure msg -> do
+                putStrLn ("Error: " ++ msg)
+                putStrLn ("You can get support at " ++ gitterUrl)
+                exitFailure
+                where gitterUrl = "https://gitter.im/guillaume-nargeot/hpc-coveralls"

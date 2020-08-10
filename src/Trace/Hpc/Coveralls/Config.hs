@@ -9,5 +9,6 @@ data Config = Config {
     serviceName     :: !(Maybe String),
     repoToken       :: !(Maybe String),
     hpcDirOverrides :: ![FilePath],
+    packageDirs     :: ![FilePath],
     testSuites      :: ![String]
     }

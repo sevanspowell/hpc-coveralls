@@ -9,7 +9,7 @@
 --
 -- Functions for reading cabal package name and version.
 
-module Trace.Hpc.Coveralls.Cabal (getPackageId, getPackageNameVersion, getPackageFromDir, getPackages) where
+module Trace.Hpc.Coveralls.Cabal (getPackageId, getPackageNameVersion, getPackageFromDir, getPackages, readTestSuiteNames) where
 
 import Control.Applicative
 import Control.Monad
@@ -19,6 +19,7 @@ import Data.Semigroup ((<>))
 import Distribution.Package (unPackageName, pkgName, pkgVersion)
 import Distribution.PackageDescription
 import Distribution.PackageDescription.Parse
+import Distribution.Types.UnqualComponentName (unUnqualComponentName)
 import Distribution.Version
 import System.Directory
 import Trace.Hpc.Coveralls.Types
@@ -52,10 +53,6 @@ currDirPkgNameVer = runMaybeT $ pkgNameVersion currentDir
     where pkgNameVersion = MaybeT . getPackageNameVersion <=< MaybeT . getCabalFile
           currentDir = "."
 
-getPackageIdFromDir :: FilePath -> IO (Maybe PackageIdentifier)
-getPackageIdFromDir = runMaybeT . pkgId
-  where pkgId = MaybeT . getPackageId <=< MaybeT . getCabalFile
-
 getPackageId :: FilePath -> IO (Maybe PackageIdentifier)
 getPackageId cabalFile = do
   orig <- readFile cabalFile
@@ -69,8 +66,12 @@ getPackageId cabalFile = do
 
 getPackageFromDir :: FilePath -> IO (Maybe Package)
 getPackageFromDir dir = do
-  mPkgId <- getPackageIdFromDir dir
-  pure $ Package dir <$> mPkgId
+  mCabalFilePath <- getCabalFile dir
+  case mCabalFilePath of
+    Nothing            -> pure Nothing
+    Just cabalFilePath -> do
+      mPkgId <- getPackageId cabalFilePath
+      pure $ Package dir cabalFilePath <$> mPkgId
 
 -- | Get a list of packages.
 --
@@ -94,7 +95,7 @@ getPackages = foldr foldF (pure [])
     iter :: (FilePath, Maybe FilePath) -> IO (Maybe Package)
     iter (rootDir, Just cabalFilePath) = do
       mPkgId <- getPackageId cabalFilePath
-      pure $ Package rootDir <$> mPkgId
+      pure $ Package rootDir cabalFilePath <$> mPkgId
     iter (rootDir, Nothing) = do
       mPkg <- getPackageFromDir rootDir
       pure mPkg
@@ -108,3 +109,13 @@ unPackageName (PackageName name) = name
 versionNumbers :: Version -> [Int]
 versionNumbers = versionBranch
 #endif
+
+readTestSuiteNames :: FilePath -> IO [String]
+readTestSuiteNames cabalFile = do
+  contents <- readFile cabalFile
+  case parsePackageDescription contents of
+    ParseFailed _ -> return []
+    ParseOk _warnings gpd -> return $ getTestSuiteNames gpd
+  
+getTestSuiteNames :: GenericPackageDescription -> [String]
+getTestSuiteNames = foldMap ((:[]) . unUnqualComponentName . fst) . condTestSuites

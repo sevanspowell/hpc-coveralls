@@ -9,7 +9,7 @@
 --
 -- Functions for converting and sending hpc output to coveralls.io.
 
-module Trace.Hpc.Coveralls ( generateCoverallsFromTix ) where
+module Trace.Hpc.Coveralls ( generateCoverallsFromTix, findHpcDataDirs, findPackages, findTestSuiteNames, getCoverageData, strictConverter, looseConverter, toCoverallsJson) where
 
 import           Control.Applicative
 import           Data.Aeson
@@ -18,15 +18,18 @@ import qualified Data.ByteString.Lazy.Char8 as LBS
 import           Data.Digest.Pure.MD5
 import           Data.Function
 import           Data.List
+import           Data.Maybe (fromMaybe)
 import           Data.Traversable (for)
+import           Data.Semigroup (Semigroup((<>)))
 import qualified Data.Map.Strict as M
 import           System.Directory (doesDirectoryExist)
-import           Data.Monoid (getFirst, First(First), (<>))
+import           Data.Monoid (getFirst, First(First))
 import           System.Exit (exitFailure)
 import           System.Directory (doesFileExist, findFile)
 import           Trace.Hpc.Coveralls.Config
 import           Trace.Hpc.Coveralls.GitInfo (GitInfo)
 import           Trace.Hpc.Coveralls.Lix
+import           Trace.Hpc.Coveralls.Cabal
 import           Trace.Hpc.Coveralls.Paths
 import           Trace.Hpc.Coveralls.Types
 import           Trace.Hpc.Coveralls.Util
@@ -134,23 +137,27 @@ readCoverageData pkgs hpcDirs excludeDirPatterns testSuiteName = do
             Just (Tix tixs) -> do
                 mixs <- mapM (readMix' pkgIds hpcDirs testSuiteName) tixs
                 let files = map filePath mixs
-                sources <- mapM (findAndReadSource pkgDirs) files
-                let coverageDataList = zip4 files sources mixs (map tixModuleTixs tixs)
+                projectFiles <- mapM (findProjectSourceFile pkgDirs) files
+                sources      <- mapM readFile projectFiles
+                let coverageDataList = zip4 projectFiles sources mixs (map tixModuleTixs tixs)
                 let filteredCoverageDataList = filter sourceDirFilter coverageDataList
                 return $ M.fromList $ map toFirstAndRest filteredCoverageDataList
                 where filePath (Mix fp _ _ _ _) = fp
                       sourceDirFilter = not . matchAny excludeDirPatterns . fst4
                       pkgIds  = pkgId      <$> pkgs
                       pkgDirs = pkgRootDir <$> pkgs
-    
-                      findAndReadSource :: [FilePath] -> FilePath -> IO String
-                      findAndReadSource pkgDirs fp = do
+
+                      removeLeading prefix fp = fromMaybe fp $ stripPrefix prefix fp
+
+                      findProjectSourceFile :: [FilePath] -> FilePath -> IO FilePath
+                      findProjectSourceFile pkgDirs fp = do
                         mFile <- findFile pkgDirs fp
                         case mFile of
                           Nothing ->
                             putStrLn ("Couldn't find the source file " ++ fp ++ " in directories: " <> show pkgDirs <> ".") >> ioFailure
                           (Just actualFilePath) ->
-                            readFile actualFilePath
+                            pure (removeLeading "./" $ -- To retain consistency with current reports
+                                  actualFilePath)
 
 
 -- | Generate coveralls json formatted code coverage from hpc coverage data
@@ -172,6 +179,22 @@ generateCoverallsFromTix serviceName jobId gitInfo config pkgs = do
               StrictlyFullLines -> strictConverter
               AllowPartialLines -> looseConverter
 
+getCoverageData
+  :: [String]
+  -- ^ Excluded source folders
+  -> [FilePath]
+  -- ^ HPC data directories
+  -> [Package]
+  -- ^ Packages
+  -> [String]
+  -- ^ Test suite names
+  -> IO TestSuiteCoverageData
+getCoverageData excludedDirPatterns hpcDirs pkgs testSuiteNames = do
+  testSuitesCoverages <- mapM (readCoverageData pkgs hpcDirs excludedDirPatterns) testSuiteNames
+  let coverageData = mergeCoverageData testSuitesCoverages
+  pure coverageData
+
+
 findHpcDataDirs :: Config -> IO [FilePath]
 findHpcDataDirs config = do
   case hpcDirOverrides config of
@@ -187,7 +210,54 @@ findHpcDataDirs config = do
         if doesExist == False
           then putStrLn ("The hpc data directory override provided does not exist: " <> hpcDir) >> ioFailure
           else pure [hpcDir]
-    
+
+findPackages :: Config -> IO [Package]
+findPackages config =
+  let
+    currDir = "./"
+
+    findPkgRequest :: FindPackageRequest
+    findPkgRequest =
+      case cabalFile config of
+        Just cabalFilePath ->
+          useExplicitCabalFiles [(currDir, Just cabalFilePath)]
+        Nothing            ->
+          let
+            packageDirOverrides :: [FilePath]
+            packageDirOverrides = packageDirs config
+            packageDirs' :: [FilePath]
+            packageDirs' =
+              if length packageDirOverrides == 0
+                then [currDir]
+                else packageDirOverrides
+          in
+            searchTheseDirectories packageDirs'
+
+    renderFindPackageRequestError :: FindPackageRequest -> String
+    renderFindPackageRequestError request =
+      let
+        render :: (FilePath, Maybe FilePath) -> String
+        render (_, Just cabalFilePath) = "\nAt location '" <> cabalFilePath <> "'"
+        render (dir, Nothing)          = "\nIn directory '" <> dir <> "'"
+
+        indent :: String -> String
+        indent = (" " <>)
+      in "Couldn't find cabal file..." <> foldMap (indent . render) request
+
+  in do
+    pkgs <- getPackages findPkgRequest
+    case pkgs of
+      [] -> putStrLn (renderFindPackageRequestError findPkgRequest) >> ioFailure
+      ps -> pure ps
+
+findTestSuiteNames :: Config -> [Package] -> IO [String]
+findTestSuiteNames config pkgs = do
+  case testSuites config of
+    [] -> do
+      let cabalFiles = pkgCabalFilePath <$> pkgs
+      foldMap readTestSuiteNames cabalFiles
+    testSuiteNames -> pure testSuiteNames
+
 ioFailure :: IO a
 ioFailure = putStrLn ("You can get support at " ++ gitterUrl) >> exitFailure
     where gitterUrl = "https://gitter.im/guillaume-nargeot/hpc-coveralls" :: String

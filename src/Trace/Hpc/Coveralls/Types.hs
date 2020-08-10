@@ -55,8 +55,9 @@ asNameVer (PackageIdentifier name ver) = name <> "-" <> ver
   
 -- | Description of a package from the perspective of hpc-coveralls.
 data Package
-  = Package { pkgRootDir :: FilePath
-            , pkgId      :: PackageIdentifier
+  = Package { pkgRootDir       :: FilePath
+            , pkgCabalFilePath :: FilePath
+            , pkgId            :: PackageIdentifier
             }
   deriving (Eq, Show)
 
