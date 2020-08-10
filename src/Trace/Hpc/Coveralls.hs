@@ -18,6 +18,7 @@ import qualified Data.ByteString.Lazy.Char8 as LBS
 import           Data.Digest.Pure.MD5
 import           Data.Function
 import           Data.List
+import           Data.Traversable (for)
 import qualified Data.Map.Strict as M
 import           System.Directory (doesDirectoryExist)
 import           Data.Monoid (getFirst, First(First), (<>))
@@ -107,43 +108,49 @@ mergeModuleCoverageData (source, mix, tixs1) (_, _, tixs2) =
 mergeCoverageData :: [TestSuiteCoverageData] -> TestSuiteCoverageData
 mergeCoverageData = foldr1 (M.unionWith mergeModuleCoverageData)
 
-readMix' :: [PackageIdentifier] -> String -> String -> TixModule -> IO Mix
-readMix' pkgIds hpcDir name tix = readMix dirs (Right tix)
+readMix' :: [PackageIdentifier] -> [FilePath] -> String -> TixModule -> IO Mix
+readMix' pkgIds hpcDirs name tix = readMix dirs (Right tix)
     where
-      dirs        = nub $ (\x -> getMixPath x hpcDir name tix) <$> (Nothing : (Just <$> pkgNameVers))
+      dirs        = nub $ (\p hpcDir -> getMixPath p hpcDir name tix) <$> (Nothing : (Just <$> pkgNameVers)) <*> hpcDirs
       pkgNameVers = asNameVer <$> pkgIds
 
 -- | Create a list of coverage data from the tix input
 readCoverageData :: [Package]                -- ^ Packages information
-                 -> String                   -- ^ hpc data directory
+                 -> [FilePath]               -- ^ hpc data directories
                  -> [String]                 -- ^ excluded source folders
                  -> String                   -- ^ test suite name
                  -> IO TestSuiteCoverageData -- ^ coverage data list
-readCoverageData pkgs hpcDir excludeDirPatterns testSuiteName = do
-    let tixPath = getTixPath hpcDir testSuiteName
-    mTix <- readTix tixPath
-    case mTix of
-        Nothing -> putStrLn ("Couldn't find the file " ++ tixPath) >> dumpDirectoryTree hpcDir >> ioFailure
-        Just (Tix tixs) -> do
-            mixs <- mapM (readMix' pkgIds hpcDir testSuiteName) tixs
-            let files = map filePath mixs
-            sources <- mapM (findAndReadSource pkgDirs) files
-            let coverageDataList = zip4 files sources mixs (map tixModuleTixs tixs)
-            let filteredCoverageDataList = filter sourceDirFilter coverageDataList
-            return $ M.fromList $ map toFirstAndRest filteredCoverageDataList
-            where filePath (Mix fp _ _ _ _) = fp
-                  sourceDirFilter = not . matchAny excludeDirPatterns . fst4
-                  pkgIds  = pkgId      <$> pkgs
-                  pkgDirs = pkgRootDir <$> pkgs
-
-                  findAndReadSource :: [FilePath] -> FilePath -> IO String
-                  findAndReadSource pkgDirs fp = do
-                    mFile <- findFile pkgDirs fp
-                    case mFile of
-                      Nothing ->
-                        putStrLn ("Couldn't find the source file " ++ fp ++ " in directories: " <> show pkgDirs <> ".") >> ioFailure
-                      (Just actualFilePath) ->
-                        readFile actualFilePath
+readCoverageData pkgs hpcDirs excludeDirPatterns testSuiteName = do
+    let tixFileLocations = possibleTixFileLocations hpcDirs testSuiteName
+    mTixPath <- firstExistingFile tixFileLocations
+    case mTixPath of
+      Nothing      ->
+        putStrLn ("Couldn't find any of the possible tix file locations: " ++ show tixFileLocations) >> ioFailure
+      Just tixPath -> do
+        mTix <- readTix tixPath
+        case mTix of
+            Nothing         ->
+              putStrLn ("Couldn't read the file " ++ tixPath) >> ioFailure
+            Just (Tix tixs) -> do
+                mixs <- mapM (readMix' pkgIds hpcDirs testSuiteName) tixs
+                let files = map filePath mixs
+                sources <- mapM (findAndReadSource pkgDirs) files
+                let coverageDataList = zip4 files sources mixs (map tixModuleTixs tixs)
+                let filteredCoverageDataList = filter sourceDirFilter coverageDataList
+                return $ M.fromList $ map toFirstAndRest filteredCoverageDataList
+                where filePath (Mix fp _ _ _ _) = fp
+                      sourceDirFilter = not . matchAny excludeDirPatterns . fst4
+                      pkgIds  = pkgId      <$> pkgs
+                      pkgDirs = pkgRootDir <$> pkgs
+    
+                      findAndReadSource :: [FilePath] -> FilePath -> IO String
+                      findAndReadSource pkgDirs fp = do
+                        mFile <- findFile pkgDirs fp
+                        case mFile of
+                          Nothing ->
+                            putStrLn ("Couldn't find the source file " ++ fp ++ " in directories: " <> show pkgDirs <> ".") >> ioFailure
+                          (Just actualFilePath) ->
+                            readFile actualFilePath
 
 
 -- | Generate coveralls json formatted code coverage from hpc coverage data
@@ -154,8 +161,8 @@ generateCoverallsFromTix :: String       -- ^ CI name
                          -> [Package]    -- ^ Packages information
                          -> IO Value     -- ^ code coverage result in json format
 generateCoverallsFromTix serviceName jobId gitInfo config pkgs = do
-    hpcDir <- findHpcDataDir config
-    testSuitesCoverages <- mapM (readCoverageData pkgs hpcDir excludedDirPatterns) testSuiteNames
+    hpcDirs <- findHpcDataDirs config
+    testSuitesCoverages <- mapM (readCoverageData pkgs hpcDirs excludedDirPatterns) testSuiteNames
     let coverageData = mergeCoverageData testSuitesCoverages
     return $ toCoverallsJson serviceName jobId repoTokenM gitInfo converter coverageData
     where excludedDirPatterns = excludedDirs config
@@ -165,20 +172,21 @@ generateCoverallsFromTix serviceName jobId gitInfo config pkgs = do
               StrictlyFullLines -> strictConverter
               AllowPartialLines -> looseConverter
 
-findHpcDataDir :: Config -> IO FilePath
-findHpcDataDir config = do
-  case hpcDirOverride config of
-    Nothing -> do
+findHpcDataDirs :: Config -> IO [FilePath]
+findHpcDataDirs config = do
+  case hpcDirOverrides config of
+    [] -> do
       mHpcDir <- firstExistingDirectory hpcDirs
       case mHpcDir of
         Nothing     -> putStrLn "Couldn't find the hpc data directory" >> dumpDirectory distDir >> ioFailure
-        Just hpcDir -> pure hpcDir
-    Just hpcDirOverride -> do
-      let hpcDir = hpcDirOverride <> "/"
-      doesExist <- doesDirectoryExist hpcDir
-      if doesExist == False
-        then putStrLn ("The hpc data directory override provided does not exist: " <> hpcDir) >> ioFailure
-        else pure hpcDir
+        Just hpcDir -> pure [hpcDir]
+    potentialHpcDirs -> do
+      fmap concat . for potentialHpcDirs $ \potentialHpcDir -> do
+        let hpcDir = potentialHpcDir <> "/"
+        doesExist <- doesDirectoryExist hpcDir
+        if doesExist == False
+          then putStrLn ("The hpc data directory override provided does not exist: " <> hpcDir) >> ioFailure
+          else pure [hpcDir]
     
 ioFailure :: IO a
 ioFailure = putStrLn ("You can get support at " ++ gitterUrl) >> exitFailure
