@@ -15,6 +15,7 @@ import Control.Applicative
 import Control.Monad
 import Control.Monad.Trans.Maybe
 import Data.List (intercalate, isSuffixOf)
+import Data.Semigroup ((<>))
 import Distribution.Package (unPackageName, pkgName, pkgVersion)
 import Distribution.PackageDescription
 import Distribution.PackageDescription.Parse
@@ -56,8 +57,8 @@ getPackageIdFromDir = runMaybeT . pkgId
   where pkgId = MaybeT . getPackageId <=< MaybeT . getCabalFile
 
 getPackageId :: FilePath -> IO (Maybe PackageIdentifier)
-getPackageId file = do
-  orig <- readFile file
+getPackageId cabalFile = do
+  orig <- readFile cabalFile
   case parsePackageDescription orig of
     ParseFailed _ -> return Nothing
     ParseOk _warnings gpd -> return . Just $ PackageIdentifier name version
@@ -94,7 +95,9 @@ getPackages = foldr foldF (pure [])
     iter (rootDir, Just cabalFilePath) = do
       mPkgId <- getPackageId cabalFilePath
       pure $ Package rootDir <$> mPkgId
-    iter (rootDir, Nothing) = getPackageFromDir rootDir
+    iter (rootDir, Nothing) = do
+      mPkg <- getPackageFromDir rootDir
+      pure mPkg
 
 #if !(MIN_VERSION_Cabal(1,22,0))
 unPackageName :: PackageName -> String
