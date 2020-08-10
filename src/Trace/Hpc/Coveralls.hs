@@ -19,9 +19,10 @@ import           Data.Digest.Pure.MD5
 import           Data.Function
 import           Data.List
 import qualified Data.Map.Strict as M
-import           Data.Semigroup ((<>))
 import           System.Directory (doesDirectoryExist)
+import           Data.Monoid (getFirst, First(First), (<>))
 import           System.Exit (exitFailure)
+import           System.Directory (doesFileExist, findFile)
 import           Trace.Hpc.Coveralls.Config
 import           Trace.Hpc.Coveralls.GitInfo (GitInfo)
 import           Trace.Hpc.Coveralls.Lix
@@ -106,41 +107,55 @@ mergeModuleCoverageData (source, mix, tixs1) (_, _, tixs2) =
 mergeCoverageData :: [TestSuiteCoverageData] -> TestSuiteCoverageData
 mergeCoverageData = foldr1 (M.unionWith mergeModuleCoverageData)
 
-readMix' :: Maybe String -> String -> String -> TixModule -> IO Mix
-readMix' mPkgNameVer hpcDir name tix = readMix dirs (Right tix)
-    where dirs = nub $ (\x -> getMixPath x hpcDir name tix) <$> [Nothing, mPkgNameVer]
+readMix' :: [PackageIdentifier] -> String -> String -> TixModule -> IO Mix
+readMix' pkgIds hpcDir name tix = readMix dirs (Right tix)
+    where
+      dirs        = nub $ (\x -> getMixPath x hpcDir name tix) <$> (Nothing : (Just <$> pkgNameVers))
+      pkgNameVers = asNameVer <$> pkgIds
 
 -- | Create a list of coverage data from the tix input
-readCoverageData :: Maybe String             -- ^ Package name-version
+readCoverageData :: [Package]                -- ^ Packages information
                  -> String                   -- ^ hpc data directory
                  -> [String]                 -- ^ excluded source folders
                  -> String                   -- ^ test suite name
                  -> IO TestSuiteCoverageData -- ^ coverage data list
-readCoverageData mPkgNameVer hpcDir excludeDirPatterns testSuiteName = do
+readCoverageData pkgs hpcDir excludeDirPatterns testSuiteName = do
     let tixPath = getTixPath hpcDir testSuiteName
     mTix <- readTix tixPath
     case mTix of
         Nothing -> putStrLn ("Couldn't find the file " ++ tixPath) >> dumpDirectoryTree hpcDir >> ioFailure
         Just (Tix tixs) -> do
-            mixs <- mapM (readMix' mPkgNameVer hpcDir testSuiteName) tixs
+            mixs <- mapM (readMix' pkgIds hpcDir testSuiteName) tixs
             let files = map filePath mixs
-            sources <- mapM readFile files
+            sources <- mapM (findAndReadSource pkgDirs) files
             let coverageDataList = zip4 files sources mixs (map tixModuleTixs tixs)
             let filteredCoverageDataList = filter sourceDirFilter coverageDataList
             return $ M.fromList $ map toFirstAndRest filteredCoverageDataList
             where filePath (Mix fp _ _ _ _) = fp
                   sourceDirFilter = not . matchAny excludeDirPatterns . fst4
+                  pkgIds  = pkgId      <$> pkgs
+                  pkgDirs = pkgRootDir <$> pkgs
+
+                  findAndReadSource :: [FilePath] -> FilePath -> IO String
+                  findAndReadSource pkgDirs fp = do
+                    mFile <- findFile pkgDirs fp
+                    case mFile of
+                      Nothing ->
+                        putStrLn ("Couldn't find the source file " ++ fp ++ " in directories: " <> show pkgDirs <> ".") >> ioFailure
+                      (Just actualFilePath) ->
+                        readFile actualFilePath
+
 
 -- | Generate coveralls json formatted code coverage from hpc coverage data
 generateCoverallsFromTix :: String       -- ^ CI name
                          -> String       -- ^ CI Job ID
                          -> GitInfo      -- ^ Git repo information
                          -> Config       -- ^ hpc-coveralls configuration
-                         -> Maybe String -- ^ Package name-version
+                         -> [Package]    -- ^ Packages information
                          -> IO Value     -- ^ code coverage result in json format
-generateCoverallsFromTix serviceName jobId gitInfo config mPkgNameVer = do
+generateCoverallsFromTix serviceName jobId gitInfo config pkgs = do
     hpcDir <- findHpcDataDir config
-    testSuitesCoverages <- mapM (readCoverageData mPkgNameVer hpcDir excludedDirPatterns) testSuiteNames
+    testSuitesCoverages <- mapM (readCoverageData pkgs hpcDir excludedDirPatterns) testSuiteNames
     let coverageData = mergeCoverageData testSuitesCoverages
     return $ toCoverallsJson serviceName jobId repoTokenM gitInfo converter coverageData
     where excludedDirPatterns = excludedDirs config
@@ -165,7 +180,6 @@ findHpcDataDir config = do
         then putStrLn ("The hpc data directory override provided does not exist: " <> hpcDir) >> ioFailure
         else pure hpcDir
     
-
 ioFailure :: IO a
 ioFailure = putStrLn ("You can get support at " ++ gitterUrl) >> exitFailure
     where gitterUrl = "https://gitter.im/guillaume-nargeot/hpc-coveralls" :: String

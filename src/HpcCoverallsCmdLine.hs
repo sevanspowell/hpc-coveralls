@@ -19,6 +19,7 @@ data HpcCoverallsArgs = CmdMain
     , optDontSend      :: Bool
     , optCoverageMode  :: CoverageMode
     , optHpcDir        :: Maybe String
+    , optPackageDirs   :: [String]
     } deriving (Data, Show, Typeable)
 
 hpcCoverallsArgs :: HpcCoverallsArgs
@@ -32,6 +33,7 @@ hpcCoverallsArgs = CmdMain
     , optServiceName   = Nothing           &= explicit &= typ "TOKEN" &= name "service-name"   &= help "service-name (e.g. travis-pro)"
     , optRepoToken     = Nothing           &= explicit &= typ "TOKEN" &= name "repo-token"     &= help "Coveralls repo token"
     , optHpcDir        = Nothing           &= explicit &= typDir      &= name "hpc-dir"        &= help "Explicitly use this hpc directory instead of trying to discover one"
+    , optPackageDirs   = []                &= explicit &= typDir      &= name "package-dir"    &= help "If building a project with multiple packages, or if your source is not in the current directory, specifiy package sub-directories here. This will only be used if the cabal-file option is not specified"
     , argTestSuites    = []                &= typ "TEST-SUITES" &= args
     } &= summary ("hpc-coveralls v" ++ versionString version ++ ", (C) Guillaume Nargeot 2014-2015")
       &= program "hpc-coveralls"

@@ -12,6 +12,7 @@
 module Trace.Hpc.Coveralls.Types where
 
 import Data.Data
+import Data.Semigroup ((<>))
 import Network.Curl
 import System.Console.CmdArgs.Default
 import Trace.Hpc.Mix
@@ -40,3 +41,36 @@ data CoverageMode = StrictlyFullLines
 data PostResult =
     PostSuccess URLString -- ^ Coveralls job url
   | PostFailure String    -- ^ error message
+
+-- | Name and version used to identify a package.
+data PackageIdentifier
+  = PackageIdentifier { pkgIdName    :: String
+                      , pkgIdVersion :: String
+                      }
+  deriving (Eq, Show)
+
+-- | Get package identifier formatted as: "$name-$ver".
+asNameVer :: PackageIdentifier -> String
+asNameVer (PackageIdentifier name ver) = name <> "-" <> ver
+  
+-- | Description of a package from the perspective of hpc-coveralls.
+data Package
+  = Package { pkgRootDir :: FilePath
+            , pkgId      :: PackageIdentifier
+            }
+  deriving (Eq, Show)
+
+type FindPackageRequest
+  = [
+      ( FilePath
+      -- ^ Project root directory
+      , Maybe FilePath
+      -- ^ Optional explicit path to cabal file
+      )
+    ]
+
+searchTheseDirectories :: [FilePath] -> FindPackageRequest
+searchTheseDirectories = fmap (\f -> (f, Nothing))
+
+useExplicitCabalFiles :: [(FilePath, Maybe FilePath)] -> FindPackageRequest
+useExplicitCabalFiles = id

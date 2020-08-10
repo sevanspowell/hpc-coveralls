@@ -1,3 +1,5 @@
+{-# LANGUAGE ScopedTypeVariables #-}
+
 module Main where
 
 import           Control.Applicative
@@ -17,6 +19,7 @@ import           Trace.Hpc.Coveralls.Config (Config(Config, cabalFile, serviceNa
 import           Trace.Hpc.Coveralls.Curl
 import           Trace.Hpc.Coveralls.GitInfo (getGitInfo)
 import           Trace.Hpc.Coveralls.Util
+import           Trace.Hpc.Coveralls.Types
 
 urlApiV1 :: String
 urlApiV1 = "https://coveralls.io/api/v1/jobs"
@@ -58,11 +61,30 @@ main = do
             (defaultServiceName, jobId) <- getServiceAndJobID
             let sn = fromMaybe defaultServiceName (serviceName config)
             gitInfo <- getGitInfo
-            mPkgNameVer <- case cabalFile config of
-                Just cabalFilePath -> getPackageNameVersion cabalFilePath
-                Nothing -> currDirPkgNameVer
+
+            let
+              currDir = "./"
+
+              findPkgRequest :: FindPackageRequest
+              findPkgRequest =
+                case cabalFile config of
+                  Just cabalFilePath ->
+                    useExplicitCabalFiles [(currDir, Just cabalFilePath)]
+                  Nothing            ->
+                    let
+                      packageDirOverrides :: [FilePath]
+                      packageDirOverrides = optPackageDirs hca
+                      packageDirs :: [FilePath]
+                      packageDirs =
+                        if length packageDirOverrides == 0
+                          then [currDir]
+                          else packageDirOverrides 
+                    in
+                      searchTheseDirectories packageDirs
+            pkgs <- getPackages findPkgRequest
+
             gitInfo <- getGitInfo
-            coverallsJson <- generateCoverallsFromTix sn jobId gitInfo config mPkgNameVer
+            coverallsJson <- generateCoverallsFromTix sn jobId gitInfo config pkgs 
             when (optDisplayReport hca) $ BSL.putStrLn $ encode coverallsJson
             let filePath = sn ++ "-" ++ jobId ++ ".json"
             writeJson filePath coverallsJson

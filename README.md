@@ -185,6 +185,15 @@ hpc
         └── my-lib-test2.tix
 ```
 
+### --package-dir
+
+This option allows you to specify a number of directories to search for cabal and source files. This might, for example, be used in a "cabal.project" with multiple Haskell packages.
+
+It will only be used if `--cabal-file` is not used.
+```bash
+--package-dir ./my-lib-1 --package-dir ./my-lib-2
+```
+
 # Limitations
 
 Because of the way hpc works, coverage data is only generated for modules that are referenced directly or indirectly by the test suites.
