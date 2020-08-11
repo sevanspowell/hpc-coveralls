@@ -137,11 +137,10 @@ readCoverageData pkgs hpcDirs excludeDirPatterns testSuiteName = do
             Just (Tix tixs) -> do
                 mixs <- mapM (readMix' pkgIds hpcDirs testSuiteName) tixs
                 let files = map filePath mixs
-                projectFiles <- mapM (findProjectSourceFile pkgDirs) files
+                projectFiles <- mapM (findProjectSourceFile pkgDirs) (filter (not . matchAny excludeDirPatterns) files)
                 sources      <- mapM readFile projectFiles
                 let coverageDataList = zip4 projectFiles sources mixs (map tixModuleTixs tixs)
-                let filteredCoverageDataList = filter sourceDirFilter coverageDataList
-                return $ M.fromList $ map toFirstAndRest filteredCoverageDataList
+                return $ M.fromList $ map toFirstAndRest coverageDataList
                 where filePath (Mix fp _ _ _ _) = fp
                       sourceDirFilter = not . matchAny excludeDirPatterns . fst4
                       pkgIds  = pkgId      <$> pkgs
