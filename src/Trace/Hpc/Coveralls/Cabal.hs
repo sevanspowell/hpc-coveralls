@@ -11,17 +11,34 @@
 
 module Trace.Hpc.Coveralls.Cabal (getPackageId, getPackageNameVersion, getPackageFromDir, getPackages, readTestSuiteNames) where
 
+#if MIN_VERSION_Cabal (2,2,0)
+import Distribution.PackageDescription.Parsec
+#else
+import Distribution.PackageDescription.Parse
+#endif
+
 import Control.Applicative
 import Control.Monad
+import Data.String (fromString)
 import Data.List (intercalate, isSuffixOf)
 import Data.Semigroup ((<>))
 import Distribution.Package (unPackageName, pkgName, pkgVersion)
 import Distribution.PackageDescription
-import Distribution.PackageDescription.Parse
 import Distribution.Types.UnqualComponentName (unUnqualComponentName)
 import Distribution.Version
 import System.Directory
 import Trace.Hpc.Coveralls.Types
+
+parsePackageDescription' :: String -> Maybe GenericPackageDescription
+parsePackageDescription' =
+#if MIN_VERSION_Cabal (2,2,0)
+  parseGenericPackageDescriptionMaybe . fromString
+#else
+  toMaybe . parsePackageDescription
+  where
+    toMaybe (ParseFailed _) = Nothing
+    toMaybe (ParseOk _ x)   = Just x
+#endif
 
 getCabalFile :: FilePath -> IO (Maybe FilePath)
 getCabalFile dir = do
@@ -39,9 +56,9 @@ getCabalFile dir = do
 getPackageNameVersion :: FilePath -> IO (Maybe String)
 getPackageNameVersion file = do
     orig <- readFile file
-    case parsePackageDescription orig of
-        ParseFailed _ -> return Nothing
-        ParseOk _warnings gpd -> return $ Just $ name ++ "-" ++ version
+    case parsePackageDescription' orig of
+        Nothing  -> return Nothing
+        Just gpd -> return $ Just $ name ++ "-" ++ version
             where pkg = package . packageDescription $ gpd
                   name = unPackageName $ pkgName pkg
                   version = showVersion (pkgVersion pkg)
@@ -50,9 +67,9 @@ getPackageNameVersion file = do
 getPackageId :: FilePath -> IO (Maybe PackageIdentifier)
 getPackageId cabalFile = do
   orig <- readFile cabalFile
-  case parsePackageDescription orig of
-    ParseFailed _ -> return Nothing
-    ParseOk _warnings gpd -> return . Just $ PackageIdentifier name version
+  case parsePackageDescription' orig of
+    Nothing  -> return Nothing
+    Just gpd -> return . Just $ PackageIdentifier name version
       where pkg = package . packageDescription $ gpd
             name = unPackageName $ pkgName pkg
             version = showVersion (pkgVersion pkg)
@@ -111,9 +128,9 @@ versionNumbers = versionBranch
 readTestSuiteNames :: FilePath -> IO [String]
 readTestSuiteNames cabalFile = do
   contents <- readFile cabalFile
-  case parsePackageDescription contents of
-    ParseFailed _ -> return []
-    ParseOk _warnings gpd -> return $ getTestSuiteNames gpd
+  case parsePackageDescription' contents of
+    Nothing  -> return []
+    Just gpd -> return $ getTestSuiteNames gpd
   
 getTestSuiteNames :: GenericPackageDescription -> [String]
 getTestSuiteNames = foldMap ((:[]) . unUnqualComponentName . fst) . condTestSuites

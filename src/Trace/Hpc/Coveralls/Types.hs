@@ -65,9 +65,9 @@ data Package
 type FindPackageRequest
   = [
       ( FilePath
-      -- ^ Project root directory
+      -- Project root directory
       , Maybe FilePath
-      -- ^ Optional explicit path to cabal file
+      -- Optional explicit path to cabal file
       )
     ]
 
