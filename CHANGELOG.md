@@ -1,3 +1,9 @@
+[1.2.0]()
+------
+* Support cabal projects
+* Support Buildkite
+* Search for mix directory modules under the root mix directory.
+
 [1.0.10](https://github.com/guillaume-nargeot/hpc-coveralls/issues?q=milestone:v1.0.10+is:closed)
 ------
 * Allow building with GHC 8.2 (issue #68)

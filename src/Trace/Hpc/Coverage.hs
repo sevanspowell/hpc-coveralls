@@ -24,10 +24,11 @@ import           Trace.Hpc.Mix
 import           Trace.Hpc.Tix
 
 readMix' :: [PackageIdentifier] -> [FilePath] -> String -> TixModule -> IO Mix
-readMix' pkgIds hpcDirs name tix = readMix dirs (Right tix)
+readMix' pkgIds hpcDirs name tix = readMix (specificMixDirs ++ baseMixDirs) (Right tix)
     where
-      dirs        = nub $ (\p hpcDir -> getMixPath p hpcDir name tix) <$> (Nothing : (Just <$> pkgNameVers)) <*> hpcDirs
-      pkgNameVers = asNameVer <$> pkgIds
+      baseMixDirs     = mixDir <$> hpcDirs
+      specificMixDirs = nub $ (\p hpcDir -> getMixPath p hpcDir name tix) <$> (Nothing : (Just <$> pkgNameVers)) <*> hpcDirs
+      pkgNameVers     = asNameVer <$> pkgIds
 
 readTix' :: [FilePath]
          -- ^ HPC data directories
