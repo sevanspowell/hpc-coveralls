@@ -52,6 +52,14 @@ getConfig hca = Config
     (optPackageDirs hca)
     (argTestSuites hca)
 
+getCoverallsVersionControlInfo :: String -> Maybe RepoToken -> IO CoverallsVersionControlInfo
+getCoverallsVersionControlInfo serviceName repoTokenM =
+  if serviceName == "travis-ci"
+  then pure (RepoTokenVersionControl repoTokenM)
+  else do
+    gitInfo <- getGitInfo
+    pure (GitVersionControl repoTokenM gitInfo)
+
 main :: IO ()
 main = do
   hca <- cmdArgs hpcCoverallsArgs
@@ -63,15 +71,16 @@ main = do
   coverageData   <- getCoverageData pkgs hpcDirs (excludedDirs config) testSuiteNames
 
   (defaultServiceName, jobId) <- getServiceAndJobID
-  let sn = fromMaybe defaultServiceName (serviceName config)
-  gitInfo <- getGitInfo
-
   let
+    sn = fromMaybe defaultServiceName (serviceName config)
     repoTokenM = repoToken config
+
+  verCtrlInfo <- getCoverallsVersionControlInfo sn repoTokenM
+  let
     converter = case coverageMode config of
       StrictlyFullLines -> strictConverter
       AllowPartialLines -> looseConverter
-    coverallsJson = toCoverallsJson sn jobId repoTokenM gitInfo converter coverageData
+    coverallsJson = toCoverallsJson sn jobId verCtrlInfo converter coverageData
 
   when (optDisplayReport hca) $ BSL.putStrLn $ encode coverallsJson
 
