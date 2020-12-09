@@ -12,6 +12,8 @@
 module Trace.Hpc.Coveralls ( toCoverallsJson
                            , strictConverter
                            , looseConverter
+                           , RepoToken
+                           , CoverallsVersionControlInfo(..)
                            ) where
 
 import           Control.Applicative
@@ -24,7 +26,7 @@ import           Data.List
 import           Data.Traversable (for)
 import           Data.Semigroup (Semigroup((<>)))
 import qualified Data.Map.Strict as M
-import           Trace.Hpc.Coveralls.GitInfo (GitInfo)
+import           Trace.Hpc.Coveralls.GitInfo (GitInfo, getGitInfo)
 import           Trace.Hpc.Coveralls.Lix
 import           Trace.Hpc.Coveralls.Types
 import           Trace.Hpc.Coveralls.Util
@@ -80,13 +82,24 @@ coverageToJson converter filePath (source, mix, tixs) = object [
           Mix _ _ _ _ mixEntries = mix
           getExprSource' = getExprSource $ lines source
 
-toCoverallsJson :: String -> String -> Maybe String -> GitInfo -> LixConverter -> TestSuiteCoverageData -> Value
-toCoverallsJson serviceName jobId repoTokenM gitInfo converter (TestSuiteCoverageData testSuiteCoverageData) =
-    object $ if serviceName == "travis-ci" then withRepoToken else withGitInfo
+toCoverallsJson :: String -> String -> CoverallsVersionControlInfo -> LixConverter -> TestSuiteCoverageData -> Value
+toCoverallsJson serviceName jobId verInfo converter (TestSuiteCoverageData testSuiteCoverageData) =
+    object $ case verInfo of
+      RepoTokenVersionControl repoTokenM ->
+        withRepoToken repoTokenM
+      GitVersionControl repoTokenM gitInfo ->
+        withGitInfo repoTokenM gitInfo
+
     where base = [
               "service_job_id" .= jobId,
               "service_name" .= serviceName,
               "source_files" .= toJsonCoverageList testSuiteCoverageData]
-          toJsonCoverageList = map (uncurry $ coverageToJson converter) . M.toList
-          withRepoToken = mcons (("repo_token" .=) <$> repoTokenM) base
-          withGitInfo   = ("git" .= gitInfo) : withRepoToken
+          toJsonCoverageList               = map (uncurry $ coverageToJson converter) . M.toList
+          withRepoToken repoTokenM         = mcons (("repo_token" .=) <$> repoTokenM) base
+          withGitInfo   repoTokenM gitInfo = ("git" .= gitInfo) : (withRepoToken repoTokenM)
+
+type RepoToken = String
+
+data CoverallsVersionControlInfo
+  = RepoTokenVersionControl (Maybe RepoToken)
+  | GitVersionControl (Maybe RepoToken) GitInfo
